@@ -10,7 +10,7 @@
 #define DHT_SENSOR_TYPE DHT_TYPE_11
 #define DHT_SENSOR_PIN 2
 #define TEMPERATURE_THRESHOLD 25.0
-#define WATER_LEVEL_THRESHOLD 100
+#define WATER_LEVEL_THRESHOLD 300
 
 volatile unsigned char* adcsra = (unsigned char*) 0x7A;
 volatile unsigned char* adcsrb = (unsigned char*) 0x7B;
@@ -22,6 +22,8 @@ volatile unsigned int* adcdata = (unsigned int*) 0x78;
 
 volatile unsigned char* portb = (unsigned char*) 0x25;
 volatile unsigned char* ddrb = (unsigned char*) 0x24;
+volatile unsigned char* pinb  = (unsigned char*) 0x23; 
+
 
 DHT_nonblocking temp_sensor(DHT_SENSOR_PIN, DHT_SENSOR_TYPE);
 
@@ -37,18 +39,25 @@ enum STATE {
 };
 int state = IDLE;
 
-enum LED {
+enum portb_pins {
   GREEN,
   BLUE,
   YELLOW,
-  RED
+  RED,
+  MOTOR,
+  DISABLE,
 };
 
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
   adc_init();
-  write_led(GREEN, 1);
+  write_pb(GREEN, 1);
+
+  *ddrb |= 0b00011111; // set output pins on PB
+  *ddrb &= 0b11011111; // set input for disable switch
+  *portb &= ~(0b01 << 4); // set motor to output low
+  //*portb |= 0b00100000; // enable pullup on disable switch
 }
 
 void loop() {
@@ -58,48 +67,63 @@ void loop() {
   // put your main code here, to run repeatedly:
   if(state == IDLE){
     if(water_level_low()){
-      write_led(GREEN, 0);
-      write_led(RED, 1);
+      write_pb(GREEN, 0);
+      write_pb(RED, 1);
       state = ERROR;
     }
     else if(temperature > TEMPERATURE_THRESHOLD){
-      write_led(GREEN, 0);
-      write_led(BLUE, 1);
+      write_pb(GREEN, 0);
+      write_pb(BLUE, 1);
       toggle_fan(1);
       state = RUNNING;
     }
   }
   else if(state == RUNNING){
     if(water_level_low()){
-      write_led(BLUE, 0);
-      write_led(RED, 1);
+      write_pb(BLUE, 0);
+      write_pb(RED, 1);
       state = ERROR;
     }
     else if(temperature < TEMPERATURE_THRESHOLD){
-      write_led(BLUE, 0);
-      write_led(GREEN, 1);
+      write_pb(BLUE, 0);
+      write_pb(GREEN, 1);
       toggle_fan(0);
       state = IDLE;
     }
   }
   else if(state == ERROR){
     if(!water_level_low()){
-      Serial.println(water_level);
-
-      write_led(RED, 0);
-      write_led(GREEN, 1);
+      write_pb(RED, 0);
+      write_pb(GREEN, 1);
       state = IDLE;
     }
   }
 }
 
 void check_disabled(){
-  
+  if(*pinb & 0b00100000){
+    state = state == DISABLED ? IDLE : DISABLED;
+    if(state == IDLE){
+      write_pb(YELLOW, 0);
+      write_pb(GREEN, 1);
+    }
+    else{
+      for(int pin = 0; pin < 5; pin++){
+        write_pb(pin, 0); // turn all leds & motor off
+      }
+      write_pb(YELLOW, 1);
+    }
+    for(int i = 0; i < 10000; i++) {} // debounce
+    while(*pinb & 0b00100000){}
+  }
 }
 
 void log_atmosphere(){
   for(int i = 0; i < 1000; i++){}
   if(temp_sensor.measure(&temperature, &humidity)) {
+    Serial.print("water level = ");
+    Serial.print(water_level);
+    Serial.print(" state = ");
     Serial.print(state);
     Serial.print(" temp = ");
     Serial.print(temperature);
@@ -115,7 +139,7 @@ bool water_level_low(){
 
 void toggle_fan(bool state){
   log_motor(state);
-  // TODO
+  write_pb(MOTOR, state);
 }
 
 void adjust_vent(){
@@ -123,7 +147,8 @@ void adjust_vent(){
 }
 
 void log_motor(bool state){
-  // TODO
+  Serial.print("setting motor to motor to ");
+  Serial.println(state);
 }
 
 void adc_init() {
@@ -156,11 +181,11 @@ unsigned int adc_read(unsigned char adc_channel){
   return (*adcdata & 0x03FF);
 }
 
-void write_led(int number, bool state){
+void write_pb(int pin, bool state){
   if(state){
-    *portb |= 0b00000001 << number;
+    *portb |= 0b00000001 << pin;
   }
   else{
-    *portb &= ~(0b00000001 << number);
+    *portb &= ~(0b00000001 << pin);
   }
 }
