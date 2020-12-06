@@ -20,6 +20,9 @@ volatile unsigned char* admux = (unsigned char*) 0x7C;
 volatile unsigned char* didr0 = (unsigned char*) 0x7E;
 volatile unsigned int* adcdata = (unsigned int*) 0x78;
 
+volatile unsigned char* portb = (unsigned char*) 0x25;
+volatile unsigned char* ddrb = (unsigned char*) 0x24;
+
 DHT_nonblocking temp_sensor(DHT_SENSOR_PIN, DHT_SENSOR_TYPE);
 
 float temperature;
@@ -34,10 +37,18 @@ enum STATE {
 };
 int state = IDLE;
 
+enum LED {
+  GREEN,
+  BLUE,
+  YELLOW,
+  RED
+};
+
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
   adc_init();
+  write_led(GREEN, 1);
 }
 
 void loop() {
@@ -47,24 +58,36 @@ void loop() {
   // put your main code here, to run repeatedly:
   if(state == IDLE){
     if(water_level_low()){
+      write_led(GREEN, 0);
+      write_led(RED, 1);
       state = ERROR;
     }
     else if(temperature > TEMPERATURE_THRESHOLD){
+      write_led(GREEN, 0);
+      write_led(BLUE, 1);
       toggle_fan(1);
       state = RUNNING;
     }
   }
   else if(state == RUNNING){
     if(water_level_low()){
+      write_led(BLUE, 0);
+      write_led(RED, 1);
       state = ERROR;
     }
     else if(temperature < TEMPERATURE_THRESHOLD){
+      write_led(BLUE, 0);
+      write_led(GREEN, 1);
       toggle_fan(0);
       state = IDLE;
     }
   }
   else if(state == ERROR){
     if(!water_level_low()){
+      Serial.println(water_level);
+
+      write_led(RED, 0);
+      write_led(GREEN, 1);
       state = IDLE;
     }
   }
@@ -74,12 +97,7 @@ void check_disabled(){
   
 }
 
-void idle_routine(){
-  
-}
-
 void log_atmosphere(){
-  // write humidity/temp
   for(int i = 0; i < 1000; i++){}
   if(temp_sensor.measure(&temperature, &humidity)) {
     Serial.print(state);
@@ -91,7 +109,8 @@ void log_atmosphere(){
 }
 
 bool water_level_low(){
-  return adc_read(0) < WATER_LEVEL_THRESHOLD;
+  water_level = adc_read(0);
+  return (water_level < WATER_LEVEL_THRESHOLD);
 }
 
 void toggle_fan(bool state){
@@ -135,4 +154,13 @@ unsigned int adc_read(unsigned char adc_channel){
   while((*adcsra & 0x40) != 0) {} // wait while converting
 
   return (*adcdata & 0x03FF);
+}
+
+void write_led(int number, bool state){
+  if(state){
+    *portb |= 0b00000001 << number;
+  }
+  else{
+    *portb &= ~(0b00000001 << number);
+  }
 }
