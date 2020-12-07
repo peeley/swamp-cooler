@@ -32,6 +32,13 @@ volatile unsigned char* portb = (unsigned char*) 0x25;
 volatile unsigned char* ddrb = (unsigned char*) 0x24;
 volatile unsigned char* pinb  = (unsigned char*) 0x23; 
 
+#define RDA 0x80
+#define TBE 0x20  
+volatile unsigned char *myUCSR0A = (unsigned char *)0x00C0;
+volatile unsigned char *myUCSR0B = (unsigned char *)0x00C1;
+volatile unsigned char *myUCSR0C = (unsigned char *)0x00C2;
+volatile unsigned int  *myUBRR0  = (unsigned int *) 0x00C4;
+volatile unsigned char *myUDR0   = (unsigned char *)0x00C6;
 
 DHT_nonblocking temp_sensor(DHT_SENSOR_PIN, DHT_SENSOR_TYPE);
 
@@ -65,7 +72,7 @@ enum portb_pins {
 
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(9600);
+  U0init(9600);
   adc_init();
 
   servo.attach(3);
@@ -88,6 +95,8 @@ void loop() {
   if(state == IDLE){
     log_atmosphere();
     if(water_level_low()){
+      lcd.clear();
+      alert_water_level();
       write_pb(GREEN, 0);
       write_pb(RED, 1);
       state = ERROR;
@@ -102,6 +111,8 @@ void loop() {
   else if(state == RUNNING){
     log_atmosphere();
     if(water_level_low()){
+      lcd.clear();
+      alert_water_level();
       write_pb(BLUE, 0);
       write_pb(RED, 1);
       toggle_fan(0);
@@ -115,8 +126,8 @@ void loop() {
     }
   }
   else if(state == ERROR){
-    log_atmosphere();
     if(!water_level_low()){
+      lcd.clear();
       write_pb(RED, 0);
       write_pb(GREEN, 1);
       state = IDLE;
@@ -143,7 +154,6 @@ void check_disable(){
 }
 
 void log_atmosphere(){
-  for(int i = 0; i < 10000; i++){}
   if(temp_sensor.measure(&temperature, &humidity)) {
     lcd.setCursor(0,0);
     lcd.print("temp = ");
@@ -152,11 +162,21 @@ void log_atmosphere(){
     lcd.print("humidity = ");
     lcd.print(humidity);
   }
+  for(int i = 0; i < 10000; i++){}
 }
+
 
 bool water_level_low(){
   water_level = adc_read(0);
+  for(int i = 0; i < 10000; i++){}
   return (water_level < WATER_LEVEL_THRESHOLD);
+}
+
+void alert_water_level(){
+  lcd.setCursor(0,0);
+  lcd.print("ALERT!");
+  lcd.setCursor(0,1);
+  lcd.print("LOW WATER");
 }
 
 void toggle_fan(bool state){
@@ -174,19 +194,28 @@ void adjust_vent(){
   }
 }
 
-void log_motor(bool state){
+// some decent string utils (that don't segfault) would be nice
+void log_motor(bool motor_state){
   datetime = clock.getDateTime();
-  Serial.print(datetime.year); Serial.print("-");
-  Serial.print(datetime.month); Serial.print("-");
-  Serial.print(datetime.day); Serial.print("T");
-  Serial.print(datetime.hour); Serial.print(":");
-  Serial.print(datetime.minute); Serial.print(":");
-  Serial.print(datetime.second); Serial.print(" Motor turned ");
-  if(state){
-    Serial.println("on");
-  }
-  else{
-    Serial.println("off");
+  String log_message = String(datetime.year);
+  log_message += "-";
+  log_message += datetime.month;
+  log_message += "-";
+  log_message += datetime.day;
+  log_message += "T";
+  log_message += datetime.hour;
+  log_message += ":";
+  log_message += datetime.minute;
+  log_message += ":";
+  log_message += datetime.second;
+  log_message += " Motor turned ";
+  log_message += motor_state ? "on\n" : "off\n";
+  print_string(log_message.c_str());
+}
+
+void print_string(char* string){
+  for(int i = 0; i < strlen(string); i++){
+    U0putchar(string[i]);
   }
 }
 
@@ -227,4 +256,27 @@ void write_pb(int pin, bool state){
   else{
     *portb &= ~(0b00000001 << pin);
   }
+}
+
+void U0init(unsigned long U0baud)
+{
+//  Students are responsible for understanding
+//  this initialization code for the ATmega2560 USART0
+//  and will be expected to be able to intialize
+//  the USART in differrent modes.
+//
+ unsigned long FCPU = 16000000;
+ unsigned int tbaud;
+ tbaud = (FCPU / 16 / U0baud - 1);
+ // Same as (FCPU / (16 * U0baud)) - 1;
+ *myUCSR0A = 0x20;
+ *myUCSR0B = 0x18;
+ *myUCSR0C = 0x06;
+ *myUBRR0  = tbaud;
+}
+
+void U0putchar(unsigned char U0pdata)
+{
+  while( (*myUCSR0A & TBE) == 0) {}
+  *myUDR0 = U0pdata;
 }
