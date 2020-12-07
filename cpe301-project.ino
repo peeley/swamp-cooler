@@ -7,10 +7,13 @@
 // Elegoo DHT11 Temperature & Humidity Sensor setup
 #include "dht_nonblocking.h"
 
+// Elegoo Servo
+#include <Servo.h>
+
 #define DHT_SENSOR_TYPE DHT_TYPE_11
 #define DHT_SENSOR_PIN 2
 #define TEMPERATURE_THRESHOLD 25.0
-#define WATER_LEVEL_THRESHOLD 300
+#define WATER_LEVEL_THRESHOLD 500
 
 volatile unsigned char* adcsra = (unsigned char*) 0x7A;
 volatile unsigned char* adcsrb = (unsigned char*) 0x7B;
@@ -31,6 +34,8 @@ float temperature;
 float humidity;
 float water_level;
 
+Servo servo;
+
 enum STATE {
   DISABLED,
   IDLE,
@@ -40,31 +45,32 @@ enum STATE {
 int state = IDLE;
 
 enum portb_pins {
-  GREEN,
-  BLUE,
-  YELLOW,
-  RED,
-  MOTOR,
-  DISABLE,
+  GREEN = 0,
+  BLUE = 1,
+  YELLOW = 2,
+  RED = 3,
+  MOTOR = 4,
+  SWITCH = 5
 };
 
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
   adc_init();
-  write_pb(GREEN, 1);
 
-  *ddrb |= 0b00011111; // set output pins on PB
-  *ddrb &= 0b11011111; // set input for disable switch
-  *portb &= ~(0b01 << 4); // set motor to output low
-  //*portb |= 0b00100000; // enable pullup on disable switch
+  servo.attach(3);
+
+  *ddrb |= 0b00011111; // set led pins to output
+  *ddrb &= ~(0b01 << SWITCH); // set input for disable switch
+  *portb &= ~(0b01 << MOTOR); // set motor to output low
+
+  write_pb(GREEN, 1);
 }
 
 void loop() {
   log_atmosphere();
   adjust_vent();
-  check_disabled();
-  // put your main code here, to run repeatedly:
+  check_disable();
   if(state == IDLE){
     if(water_level_low()){
       write_pb(GREEN, 0);
@@ -82,6 +88,7 @@ void loop() {
     if(water_level_low()){
       write_pb(BLUE, 0);
       write_pb(RED, 1);
+      toggle_fan(0);
       state = ERROR;
     }
     else if(temperature < TEMPERATURE_THRESHOLD){
@@ -100,8 +107,8 @@ void loop() {
   }
 }
 
-void check_disabled(){
-  if(*pinb & 0b00100000){
+void check_disable(){
+  if(*pinb & (0b01 << SWITCH)){
     state = state == DISABLED ? IDLE : DISABLED;
     if(state == IDLE){
       write_pb(YELLOW, 0);
@@ -114,7 +121,7 @@ void check_disabled(){
       write_pb(YELLOW, 1);
     }
     for(int i = 0; i < 10000; i++) {} // debounce
-    while(*pinb & 0b00100000){}
+    while(*pinb & (0b01 << SWITCH)){}
   }
 }
 
@@ -138,12 +145,25 @@ bool water_level_low(){
 }
 
 void toggle_fan(bool state){
+  Serial.print("switch state ");
+  Serial.println(*pinb & (0b01 << SWITCH));
   log_motor(state);
   write_pb(MOTOR, state);
+  Serial.print("switch state ");
+  Serial.println(*pinb & (0b01 << SWITCH));
 }
 
+int angle = 0;
 void adjust_vent(){
-  // TODO
+  int new_angle = adc_read(1);
+  if((new_angle > angle && new_angle - angle > 100) || 
+      (angle > new_angle && angle - new_angle > 100)){
+    Serial.print("vent adjusted ");
+    Serial.print(angle); Serial.print(" -> ");
+    Serial.println(new_angle);
+    angle = new_angle;
+    servo.write(angle);
+  }
 }
 
 void log_motor(bool state){
@@ -155,8 +175,8 @@ void adc_init() {
   *adcsra |= 0b10000000;
   *adcsra &= 0b11010000; // enable ADC, disable interrupts and autotrigger
 
-  *ddrf &= 0b11111110; // set pf0 to input
-  *didr0 |= 0b00000001; // disable digital input
+  *ddrf &= 0b11111100; // set pf0 to input
+  *didr0 |= 0b00000011; // disable digital input
   
   *adcsrb &= 0b11110000; // set free running mode, reset channel/gain bits
   
