@@ -10,6 +10,11 @@
 // Elegoo Servo
 #include <Servo.h>
 
+// DS3231 Real Time Clock
+#include "DS3231.h"
+
+#include "LiquidCrystal.h"
+
 #define DHT_SENSOR_TYPE DHT_TYPE_11
 #define DHT_SENSOR_PIN 2
 #define TEMPERATURE_THRESHOLD 25.0
@@ -35,6 +40,11 @@ float humidity;
 float water_level;
 
 Servo servo;
+
+DS3231 clock;
+RTCDateTime datetime;
+
+LiquidCrystal lcd(4,5,6,7,8,9);
 
 enum STATE {
   DISABLED,
@@ -65,13 +75,18 @@ void setup() {
   *portb &= ~(0b01 << MOTOR); // set motor to output low
 
   write_pb(GREEN, 1);
+
+  clock.begin();
+  clock.setDateTime(__DATE__, __TIME__);
+
+  lcd.begin(16, 2);
 }
 
 void loop() {
-  log_atmosphere();
   adjust_vent();
   check_disable();
   if(state == IDLE){
+    log_atmosphere();
     if(water_level_low()){
       write_pb(GREEN, 0);
       write_pb(RED, 1);
@@ -85,6 +100,7 @@ void loop() {
     }
   }
   else if(state == RUNNING){
+    log_atmosphere();
     if(water_level_low()){
       write_pb(BLUE, 0);
       write_pb(RED, 1);
@@ -99,6 +115,7 @@ void loop() {
     }
   }
   else if(state == ERROR){
+    log_atmosphere();
     if(!water_level_low()){
       write_pb(RED, 0);
       write_pb(GREEN, 1);
@@ -126,16 +143,14 @@ void check_disable(){
 }
 
 void log_atmosphere(){
-  for(int i = 0; i < 1000; i++){}
+  for(int i = 0; i < 10000; i++){}
   if(temp_sensor.measure(&temperature, &humidity)) {
-    Serial.print("water level = ");
-    Serial.print(water_level);
-    Serial.print(" state = ");
-    Serial.print(state);
-    Serial.print(" temp = ");
-    Serial.print(temperature);
-    Serial.print(" humidity = ");
-    Serial.println(humidity);
+    lcd.setCursor(0,0);
+    lcd.print("temp = ");
+    lcd.print(temperature);
+    lcd.setCursor(0,1);
+    lcd.print("humidity = ");
+    lcd.print(humidity);
   }
 }
 
@@ -145,12 +160,8 @@ bool water_level_low(){
 }
 
 void toggle_fan(bool state){
-  Serial.print("switch state ");
-  Serial.println(*pinb & (0b01 << SWITCH));
   log_motor(state);
   write_pb(MOTOR, state);
-  Serial.print("switch state ");
-  Serial.println(*pinb & (0b01 << SWITCH));
 }
 
 int angle = 0;
@@ -158,17 +169,25 @@ void adjust_vent(){
   int new_angle = adc_read(1);
   if((new_angle > angle && new_angle - angle > 100) || 
       (angle > new_angle && angle - new_angle > 100)){
-    Serial.print("vent adjusted ");
-    Serial.print(angle); Serial.print(" -> ");
-    Serial.println(new_angle);
     angle = new_angle;
     servo.write(angle);
   }
 }
 
 void log_motor(bool state){
-  Serial.print("setting motor to motor to ");
-  Serial.println(state);
+  datetime = clock.getDateTime();
+  Serial.print(datetime.year); Serial.print("-");
+  Serial.print(datetime.month); Serial.print("-");
+  Serial.print(datetime.day); Serial.print("T");
+  Serial.print(datetime.hour); Serial.print(":");
+  Serial.print(datetime.minute); Serial.print(":");
+  Serial.print(datetime.second); Serial.print(" Motor turned ");
+  if(state){
+    Serial.println("on");
+  }
+  else{
+    Serial.println("off");
+  }
 }
 
 void adc_init() {
